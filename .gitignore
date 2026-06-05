@@ -1,0 +1,35 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+models/
+
+# Virtual environments
+.venv
+# Ignore model weight shards
+*.safetensors
+*.index.json
+
+# Ignore model config/tokenizer files
+preprocessor_config.json
+processor_config.json
+special_tokens_map.json
+tokenizer.json
+tokenizer.model
+tokenizer_config.json
+
+# Ignore text output/log files
+*.txt
+ouputs/
+BODHI-RLVR/
+ouputs/
+BODHI-RLVR/
+ouputs/
+outputs/
+data/
+BODHI-RLVR/
+.venv/
+*.log
