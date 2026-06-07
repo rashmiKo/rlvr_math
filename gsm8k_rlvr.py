@@ -110,6 +110,7 @@ def load_model(args):
 		quantization_config = quantization_config,
 		device_map = "auto",
 		torch_dtype=torch.bfloat16,
+		attn_implementation="sdpa"
 	)
 
 	peft_config = LoraConfig(
@@ -139,8 +140,8 @@ def reward_function(completions,answer,**kwargs):
 			1.0 if prediction == gt else 0.0)
 		        # --- PRINT EVERYTHING LIVE TO YOUR TERMINAL SCREEN ---
 		#print("\n" + "="*50)
-		#print(f"🤖 MODEL GENERATION:\n{completion}")
-		#print(f"🎯 GROUND TRUTH: {answer}")
+		#print(f" MODEL GENERATION:\n{completion}")
+		#print(f" GROUND TRUTH: {answer}")
 		#print("="*50 + "\n")
 
 	return rewards
@@ -163,17 +164,22 @@ def main():
 
 		output_dir = "ouputs",
 		num_generations = 4,
-		max_completion_length = 512,
-		per_device_train_batch_size = 1,
+		max_completion_length = 1024,
+		per_device_train_batch_size = 4,
 		gradient_accumulation_steps = 4, ##????
 		bf16 = True,
 		logging_steps = 5,
+
+		use_vllm=True,
+		vllm_mode="colocate",         # Safely shares your single GPU between training and sampling
+		vllm_gpu_memory_utilization=0.3, # Reserves 30% VRAM for text generation, leaving 70% for LoRA weights
+
 
                 gradient_checkpointing=True,
                 gradient_checkpointing_kwargs={"use_reentrant": False},
 
 		per_device_eval_batch_size=4,    # Processes 1 test prompt at a time
-		eval_strategy="steps",           # Runs testing on a step interval
+		eval_strategy="epoch",           # Runs testing on a step interval
 		eval_steps=5,                    # Runs evaluation every 5 training step
 	)
 
@@ -204,7 +210,10 @@ def main():
 	final_reward = eval_metrics.get("eval_rewards/reward_function/mean", 0.0)
 	print(f"   Overall Average Accuracy: {final_reward * 100:.2f}%")
 
-
+	import torch.distributed as dist
+	if dist.is_initialized():
+		dist.destroy_process_group()
+		print(" Process group cleaned up successfully.")
 
 
 if __name__ == "__main__":
