@@ -4,6 +4,7 @@ from transformers import AutoTokenizer
 from datasets import load_dataset
 import re, argparse
 
+
 system_prompt = r"""
 # Identity
 You are a helpful AI assistant. Help the user solve a mathematical query.
@@ -82,6 +83,10 @@ def extract_answer(response):
 
 	return None
 
+def create_prompt(x):
+	return (f"""{system_prompt}\n
+Question: {x['question']}
+Answer:""")
 def main():
 
 	args = parser_arguments()
@@ -92,20 +97,15 @@ def main():
 
 	gen_config = SamplingParams(
 		n           = 1,
-		max_tokens  = 8192,
+		max_tokens  = 4096, #changed from 8192(qwen_8b)
 		temperature = 0.6,
 		top_p       = 0.95,
 		skip_special_tokens = False,
 	)
 
-	create_prompt = lambda x: [\
-		{"role": "system", "content": system_prompt},\
-		{"role": "user", "content": x["question"]},\
-	]
-
 	llm = LLM(
 		model         = args.model,
-		max_model_len = 8192,
+		max_model_len = 4096, #changed (8192 for qwen8b)
 		max_num_seqs  = 4,
 	)
 
@@ -113,6 +113,9 @@ def main():
 	batch_size = args.batch_size
 	for batch in batchify(dataset, batch_size):
 		prompts = list(map(create_prompt, batch))
+		if "qwen" in args.model.lower() and hasattr(tokenizer, "chat_template") and tokenizer.chat_template:
+			prompts = [tokenizer.apply_chat_template(p, tokenize = False) for p in prompts]
+
 		outputs = llm.generate(prompts, gen_config)
 
 		texts = [o.outputs[0].text for o in outputs]
@@ -127,3 +130,4 @@ def main():
 
 if __name__ == "__main__":
 	main()
+

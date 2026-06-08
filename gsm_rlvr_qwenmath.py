@@ -28,15 +28,21 @@ def parser_arguments():
 	return parser.parse_args()
 
 def extract_answer(response):
-    match = re.search(r"####\s*([-+]?\d*\.?\d+)", response)
+	match = re.search(r"####\s*([-+]?\d*\.?\d+)", response)
 
-    if match is not None:
-        try:
-            return int(float(match.group(1)))
-        except:
-            return None
+	if match is not None:
+		try:
+			return int(float(match.group(1)))
+		except:
+			pass
+	match_boxed = re.search(r"\\boxed\{\s*([-+]?\d*\.?\d+)\s*\}", response)
+	if match_boxed is not None:
+		try:
+			return int(float(match_boxed.group(1)))
+		except:
+			pass
 
-    return None
+	return None
 
 
 
@@ -151,6 +157,16 @@ def main():
 	args = parser_arguments()
 	tokenizer = AutoTokenizer.from_pretrained(args.model)
 
+	if tokenizer.chat_template is None:
+		tokenizer.chat_template = (
+			"{% for message in messages %}"
+			"{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
+			"{% endfor %}"
+			"{% if add_generation_prompt %}"
+			"{{ '<|im_start|>assistant\n' }}"
+			"{% endif %}"
+		)
+
 	if tokenizer.pad_token is None:
 		tokenizer.pad_token = tokenizer.eos_token
 
@@ -169,12 +185,15 @@ def main():
 		gradient_accumulation_steps = 4, ##????
 		bf16 = True,
 		logging_steps = 5,
+		learning_rate=args.lr,
+		lr_scheduler_type="constant",
 
 		use_vllm=True,
 		vllm_mode="colocate",         # Safely shares your single GPU between training and sampling
 		vllm_gpu_memory_utilization=0.3, # Reserves 30% VRAM for text generation, leaving 70% for LoRA weights
 
 
+		vllm_max_model_length=2048, #put for llama and gemma
                 gradient_checkpointing=True,
                 gradient_checkpointing_kwargs={"use_reentrant": False},
 
@@ -194,6 +213,14 @@ def main():
 		eval_dataset = eval_dataset,
 
 	)
+
+	if "gemma" in args.model:
+		original_forward = trainer.model.forward
+		def gemma_forward_wrapper(*args, **kwargs):
+			if "token_type_ids" not in kwargs and "input_ids" in kwargs:
+				kwargs["token_type_ids"] = torch.zeros_like(kwargs["input_ids"])
+			return original_forward(*args, **kwargs)
+		trainer.model.forward = gemma_forward_wrapper
 
 	print("starting training loop...")
 	trainer.train()

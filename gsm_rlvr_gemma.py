@@ -28,15 +28,21 @@ def parser_arguments():
 	return parser.parse_args()
 
 def extract_answer(response):
-    match = re.search(r"####\s*([-+]?\d*\.?\d+)", response)
+	match = re.search(r"####\s*([-+]?\d*\.?\d+)", response)
 
-    if match is not None:
-        try:
-            return int(float(match.group(1)))
-        except:
-            return None
+	if match is not None:
+		try:
+			return int(float(match.group(1)))
+		except:
+			pass
+	match_boxed = re.search(r"\\boxed\{\s*([-+]?\d*\.?\d+)\s*\}", response)
+	if match_boxed is not None:
+		try:
+			return int(float(match_boxed.group(1)))
+		except:
+			pass
 
-    return None
+	return None
 
 
 
@@ -127,29 +133,42 @@ def load_model(args):
 	return model
 
 
+def reward_function(completions, answer, **kwargs):
+    rewards = []
+    
+    for completion, gt in zip(completions, answer):
+        text_content = completion.get("content", "") if isinstance(completion, dict) else str(completion)
+        
+        # 1. Base formatting reward: Give partial credit just for using the format tag
+        format_reward = 0.0
+        if "####" in text_content:
+            format_reward = 0.4  # Massive boost to force the base model 
+            
+        # 2. Extract and check the math logic
+        prediction = extract_answer(text_content)
+        correctness_reward = 0.0
+        if prediction is not None and prediction == gt:
+            correctness_reward = 0.6  # Remainder of the reward
+            
+        rewards.append(format_reward + correctness_reward)
+        
+    return rewards
 
-def reward_function(completions,answer,**kwargs):
-	rewards = []
-
-	for completion, gt in zip(completions,answer):
-		prediction = extract_answer(completion)
-		if prediction is None:
-			rewards.append(0.0)
-			continue
-		rewards.append(
-			1.0 if prediction == gt else 0.0)
-		        # --- PRINT EVERYTHING LIVE TO YOUR TERMINAL SCREEN ---
-		#print("\n" + "="*50)
-		#print(f" MODEL GENERATION:\n{completion}")
-		#print(f" GROUND TRUTH: {answer}")
-		#print("="*50 + "\n")
-
-	return rewards
 
 def main():
 
 	args = parser_arguments()
 	tokenizer = AutoTokenizer.from_pretrained(args.model)
+
+	if tokenizer.chat_template is None:
+		tokenizer.chat_template = (
+			"{% for message in messages %}"
+			"{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>\n' }}"
+			"{% endfor %}"
+			"{% if add_generation_prompt %}"
+			"{{ '<|im_start|>assistant\n' }}"
+			"{% endif %}"
+		)
 
 	if tokenizer.pad_token is None:
 		tokenizer.pad_token = tokenizer.eos_token
@@ -169,12 +188,15 @@ def main():
 		gradient_accumulation_steps = 4, ##????
 		bf16 = True,
 		logging_steps = 5,
+		learning_rate=args.lr,
+		lr_scheduler_type="constant",
 
 		use_vllm=True,
 		vllm_mode="colocate",         # Safely shares your single GPU between training and sampling
 		vllm_gpu_memory_utilization=0.3, # Reserves 30% VRAM for text generation, leaving 70% for LoRA weights
 
 
+		vllm_max_model_length=2048, #put for llama and gemma
                 gradient_checkpointing=True,
                 gradient_checkpointing_kwargs={"use_reentrant": False},
 
@@ -194,6 +216,14 @@ def main():
 		eval_dataset = eval_dataset,
 
 	)
+
+	if "gemma" in args.model:
+		original_forward = trainer.model.forward
+		def gemma_forward_wrapper(*args, **kwargs):
+			if "token_type_ids" not in kwargs and "input_ids" in kwargs:
+				kwargs["token_type_ids"] = torch.zeros_like(kwargs["input_ids"])
+			return original_forward(*args, **kwargs)
+		trainer.model.forward = gemma_forward_wrapper
 
 	print("starting training loop...")
 	trainer.train()
